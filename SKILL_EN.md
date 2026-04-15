@@ -1,7 +1,7 @@
 ---
 name: sub_manager_lite
 description: Subscription management service - track subscriptions, calculate expenses, billing alerts, auto-renewal
-trigger: User asks subscription-related operations like "add subscription", "update subscription", "check expenses", "upcoming bills", "cancel subscription", "restore subscription", "delete subscription", "migrate from Wallos"
+trigger: User asks subscription-related operations like "add subscription", "update subscription", "check expenses", "upcoming bills", "expired subscriptions", "cancel subscription", "restore subscription", "delete subscription", "migrate from Wallos"
 ---
 
 # Sub Manager Lite
@@ -62,16 +62,25 @@ X-API-Token: <Token>
 | PUT | `/subscriptions/{id}/restore` | Restore canceled subscription |
 | DELETE | `/subscriptions/{id}` | Delete subscription record |
 | GET | `/subscriptions/` | List subscriptions (filter by name, status) |
-| GET | `/subscriptions/stats` | Expense statistics (with period param) |
+| GET | `/subscriptions/stats` | Expense statistics (excludes expired subscriptions) |
 | GET | `/subscriptions/upcoming` | Billing alerts (with days param) |
+| GET | `/subscriptions/expired` | Expired subscriptions list |
 
 ## Endpoint Parameters
 
 ### GET /subscriptions/stats
 - `period`: `monthly` or `yearly`, default monthly
+- `base_currency`: Base currency, default CNY, options: USD, EUR, etc.
+- **Note**: Only counts active subscriptions that haven't expired
+- **Multi-currency**: Auto-fetches exchange rates; falls back to currency grouping if rates unavailable
 
 ### GET /subscriptions/upcoming
 - `days`: Alert days, default 7, range 1-365
+
+### GET /subscriptions/expired
+- No parameters
+- Returns subscriptions with Active status but past due date
+- Sorted by due date descending (most expired first)
 
 ## Request Examples
 
@@ -101,11 +110,18 @@ PUT /subscriptions/1
 Stats response:
 ```json
 {
-  "total_cost": 240.0,
+  "total_cost": 1650.0,
+  "base_currency": "CNY",
   "period": "yearly",
   "active_count": 5,
-  "breakdown": {"Productivity": 200.0, "Entertainment": 40.0}
+  "breakdown_by_category": {"Productivity": 1440.0, "Entertainment": 210.0},
+  "breakdown_by_currency": {"USD": 240.0, "CNY": 100.0},
+  "rates_used": {"USD": 7.25, "CNY": 1.0},
+  "rates_available": true
 }
+```
+
+**Note**: When `rates_available=false`, exchange rates couldn't be fetched. `total_cost` only counts base-currency subscriptions; refer to `breakdown_by_currency` for full picture.
 ```
 
 ## Billing Cycle
@@ -250,11 +266,22 @@ Total: $45.99
 | "How much this month" | GET /subscriptions/stats |
 | "How much this year" | GET /subscriptions/stats?period=yearly |
 | "What's due next month" | GET /subscriptions/upcoming?days=30 |
+| "What subscriptions expired" | GET /subscriptions/expired |
 | "Cancel subscription" | PUT /subscriptions/{id}/cancel |
 | "Restore subscription" | PUT /subscriptions/{id}/restore |
 | "Delete subscription" | DELETE /subscriptions/{id} |
 | "Migrate from Wallos" | Follow migration flow |
 | "Set expiry reminder" | Set scheduled task calling upcoming endpoint |
+
+## Handling Expired Subscriptions
+
+When user queries expired subscriptions (GET /subscriptions/expired), ask user to decide:
+
+| User Intent | Agent Action |
+|-------------|--------------|
+| "Still need this subscription" | PUT /subscriptions/{id} update ending_date or set auto_renew=true |
+| "No longer need" | PUT /subscriptions/{id}/cancel or DELETE /subscriptions/{id} |
+| "Batch process expired" | Iterate expired list, ask user for each |
 
 ## Error Codes
 

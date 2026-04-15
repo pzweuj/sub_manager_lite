@@ -114,11 +114,11 @@ class StatsResponse(SQLModel):
     """
     total_cost: float = Field(
         ...,
-        description="总花费（月均或年度，取决于 period 参数）"
+        description="基准货币总花费（月均或年度，取决于 period 参数）"
     )
-    currency: str = Field(
+    base_currency: str = Field(
         default="CNY",
-        description="统计使用的货币单位"
+        description="基准货币单位"
     )
     active_count: int = Field(
         ...,
@@ -128,7 +128,19 @@ class StatsResponse(SQLModel):
         ...,
         description="统计周期：monthly 或 yearly"
     )
-    breakdown: dict = Field(
+    breakdown_by_category: dict = Field(
         default_factory=dict,
-        description="按分类的费用明细，key 为分类名称，value 为该分类的花费"
+        description="按分类的费用明细（基准货币），key 为分类名称，value 为该分类的花费"
+    )
+    breakdown_by_currency: dict = Field(
+        default_factory=dict,
+        description="按货币分组的原始费用明细，key 为货币代码，value 为该货币的总花费"
+    )
+    rates_used: Optional[dict] = Field(
+        default=None,
+        description="使用的汇率信息，key 为货币代码，value 为该货币到基准货币的汇率"
+    )
+    rates_available: bool = Field(
+        default=True,
+        description="汇率是否可用。False 表示无法获取汇率，仅返回货币分组统计"
     )

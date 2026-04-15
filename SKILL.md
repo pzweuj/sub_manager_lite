@@ -1,7 +1,7 @@
 ---
 name: sub_manager_lite
 description: 订阅管理服务 - 记录订阅、计算开销、账单预警、自动续期
-trigger: 用户询问订阅相关操作时调用，如"记录订阅"、"更新订阅"、"查看花费"、"即将扣费"、"取消订阅"、"恢复订阅"、"删除订阅"、"从Wallos迁移"
+trigger: 用户询问订阅相关操作时调用，如"记录订阅"、"更新订阅"、"查看花费"、"即将扣费"、"过期订阅"、"取消订阅"、"恢复订阅"、"删除订阅"、"从Wallos迁移"
 ---
 
 # Sub Manager Lite
@@ -62,16 +62,25 @@ X-API-Token: <Token>
 | PUT | `/subscriptions/{id}/restore` | 恢复已取消订阅 |
 | DELETE | `/subscriptions/{id}` | 删除订阅记录 |
 | GET | `/subscriptions/` | 查询列表（支持 name、status 过滤） |
-| GET | `/subscriptions/stats` | 费用统计（支持 period 参数） |
+| GET | `/subscriptions/stats` | 费用统计（支持 period 参数，自动排除过期订阅） |
 | GET | `/subscriptions/upcoming` | 账单预警（支持 days 参数） |
+| GET | `/subscriptions/expired` | 过期订阅列表 |
 
 ## 接口参数
 
 ### GET /subscriptions/stats
 - `period`: `monthly`（月度）或 `yearly`（年度），默认 monthly
+- `base_currency`: 基准货币，默认 CNY，可选 USD、EUR 等
+- **注意**：只统计未过期的活跃订阅
+- **多货币支持**：自动获取汇率转换，汇率不可用时返回货币分组
 
 ### GET /subscriptions/upcoming
 - `days`: 预警天数，默认 7，范围 1-365
+
+### GET /subscriptions/expired
+- 无参数
+- 返回状态为 Active 但到期日已过期的订阅
+- 按到期日降序排列（最久过期的排在前面）
 
 ## 请求示例
 
@@ -101,11 +110,18 @@ PUT /subscriptions/1
 统计返回：
 ```json
 {
-  "total_cost": 240.0,
+  "total_cost": 1650.0,
+  "base_currency": "CNY",
   "period": "yearly",
   "active_count": 5,
-  "breakdown": {"生产力": 200.0, "娱乐": 40.0}
+  "breakdown_by_category": {"生产力": 1440.0, "娱乐": 210.0},
+  "breakdown_by_currency": {"USD": 240.0, "CNY": 100.0},
+  "rates_used": {"USD": 7.25, "CNY": 1.0},
+  "rates_available": true
 }
+```
+
+**注意**：`rates_available=false` 时表示无法获取汇率，此时 `total_cost` 仅统计基准货币订阅，用户需参考 `breakdown_by_currency`。
 ```
 
 ## 计费周期
@@ -250,11 +266,22 @@ POST /subscriptions/
 | "本月花了多少" | GET /subscriptions/stats |
 | "今年花了多少" | GET /subscriptions/stats?period=yearly |
 | "下月有什么扣费" | GET /subscriptions/upcoming?days=30 |
+| "有哪些过期订阅" | GET /subscriptions/expired |
 | "取消订阅" | PUT /subscriptions/{id}/cancel |
 | "恢复订阅" | PUT /subscriptions/{id}/restore |
 | "删除订阅" | DELETE /subscriptions/{id} |
 | "从Wallos迁移数据" | 按迁移流程操作 |
 | "设置到期提醒" | 设置定时任务调用 upcoming 接口 |
+
+## 过期订阅处理
+
+当用户查询过期订阅时（GET /subscriptions/expired），返回的订阅需要用户决定处理方式：
+
+| 用户意图 | Agent 操作 |
+|----------|------------|
+| "仍需要这个订阅" | PUT /subscriptions/{id} 更新 ending_date 或设置 auto_renew=true |
+| "不再需要" | PUT /subscriptions/{id}/cancel 或 DELETE /subscriptions/{id} |
+| "批量处理过期订阅" | 遍历 expired 列表，询问用户对每个的处理方式 |
 
 ## 错误码
 

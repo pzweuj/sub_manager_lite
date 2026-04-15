@@ -7,3 +7,6 @@ sqlmodel>=0.0.14
 
 # Scheduler
 apscheduler>=3.10.0
+
+# HTTP Client
+httpx>=0.25.0

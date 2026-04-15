@@ -9,6 +9,7 @@ from sqlmodel import Session, col, select
 
 from app.auth import verify_token
 from app.database import get_session
+from app.exchange import fetch_all_rates_to_base, DEFAULT_BASE_CURRENCY
 from app.models import (
     BillingCycle,
     StatsResponse,
@@ -38,16 +39,6 @@ router = APIRouter(
 - 记录一个新的订阅服务信息，包括名称、价格、计费周期、到期日等
 - 创建后订阅状态默认为 Active（活跃），自动续期默认为 False
 - 系统自动生成唯一的主键 ID
-
-## 请求体字段
-- `name`: 订阅服务名称（必填）
-- `price`: 订阅价格（必填，必须为正数）
-- `currency`: 货币类型（默认 CNY）
-- `billing_cycle`: 计费周期 Monthly/Yearly/Weekly（默认 Monthly）
-- `ending_date`: 到期日/下次扣费日（必填，格式 YYYY-MM-DD）
-- `category`: 分类标签（默认"其他"）
-- `status`: 订阅状态（默认 Active）
-- `auto_renew`: 是否自动续期（默认 False）
 
 ## 返回值
 返回创建成功的订阅记录，包含系统生成的 ID。
@@ -82,9 +73,6 @@ async def create_subscription(
 
 ## 参数
 - `sub_id`: 订阅记录的唯一标识 ID
-
-## 请求体
-所有字段均为可选，提供即更新，未提供保持原值。
 """,
     responses={
         200: {"description": "更新成功"},
@@ -290,20 +278,27 @@ async def list_subscriptions(
     response_model=StatsResponse,
     summary="费用统计",
     description="""
-计算当前所有活跃订阅的费用统计。
+计算当前所有有效订阅的费用统计。
 
 ## 功能说明
-- 仅统计状态为 Active 的订阅
+- 仅统计状态为 Active 且未过期的订阅
+- 过期订阅（到期日早于今天）不计入统计
 - 支持月度或年度统计（通过 period 参数）
-- 按分类展示费用明细
-
-## 计费周期折算
-- Monthly: 直接计入
-- Yearly: 价格除以 12（月度）或直接计入（年度）
-- Weekly: 价格乘以 4.33（月度）或乘以 52（年度）
+- 支持多货币订阅，自动获取汇率转换为基准货币
+- 汇率使用 Frankfurter API（免费、无需密钥）
+- 若汇率获取失败，仍返回按货币分组的原始统计
 
 ## 查询参数
 - `period`: 统计周期，monthly（月度）或 yearly（年度），默认 monthly
+- `base_currency`: 基准货币，默认 CNY，可选 USD、EUR 等
+
+## 返回字段
+- `total_cost`: 基准货币总花费
+- `base_currency`: 基准货币代码
+- `breakdown_by_category`: 按分类的费用明细（已转换）
+- `breakdown_by_currency`: 按货币分组的原始费用
+- `rates_used`: 使用到的汇率信息
+- `rates_available`: 汇率是否全部可用
 """,
     responses={
         200: {"description": "统计成功"},
@@ -315,17 +310,31 @@ async def get_stats(
         "monthly",
         description="统计周期：monthly（月度）或 yearly（年度）"
     ),
+    base_currency: str = Query(
+        None,
+        description="基准货币，默认 CNY。如不指定则使用环境变量 BASE_CURRENCY"
+    ),
     session: Session = Depends(get_session)
 ) -> StatsResponse:
+    today = date.today()
+
+    # 确定基准货币
+    target_currency = base_currency or DEFAULT_BASE_CURRENCY
+
+    # 只统计状态为 Active 且未过期的订阅
     statement = select(Subscription).where(
-        Subscription.status == SubscriptionStatus.ACTIVE
+        Subscription.status == SubscriptionStatus.ACTIVE,
+        Subscription.ending_date >= today
     )
     subscriptions = session.exec(statement).all()
 
-    total_cost = 0.0
-    breakdown: dict[str, float] = {}
+    # 按货币分组统计原始费用
+    breakdown_by_currency: dict[str, float] = {}
+    # 按分类统计（需要转换后）
+    breakdown_by_category: dict[str, float] = {}
 
     for sub in subscriptions:
+        # 计算周期费用
         if period == "yearly":
             if sub.billing_cycle == BillingCycle.MONTHLY:
                 cost = sub.price * 12
@@ -345,16 +354,68 @@ async def get_stats(
             else:
                 cost = sub.price
 
-        total_cost += cost
-        category = sub.category or "其他"
-        breakdown[category] = breakdown.get(category, 0) + cost
+        # 按货币分组累计
+        currency = sub.currency or "CNY"
+        breakdown_by_currency[currency] = breakdown_by_currency.get(currency, 0) + cost
+
+    # 获取汇率
+    currencies = list(breakdown_by_currency.keys())
+    rates = await fetch_all_rates_to_base(currencies, target_currency)
+
+    # 检查汇率是否可用
+    rates_available = all(r is not None for r in rates.values())
+
+    # 计算基准货币总费用
+    total_cost = 0.0
+    rates_used: dict[str, float] = {}
+
+    for currency, cost in breakdown_by_currency.items():
+        rate = rates.get(currency)
+        if rate is not None:
+            converted_cost = cost * rate
+            total_cost += converted_cost
+            rates_used[currency] = rate
+        else:
+            # 汇率不可用时，该货币不计入总费用
+            rates_available = False
+
+    # 按分类统计（转换后的费用）
+    for sub in subscriptions:
+        if period == "yearly":
+            if sub.billing_cycle == BillingCycle.MONTHLY:
+                cost = sub.price * 12
+            elif sub.billing_cycle == BillingCycle.YEARLY:
+                cost = sub.price
+            elif sub.billing_cycle == BillingCycle.WEEKLY:
+                cost = sub.price * 52
+            else:
+                cost = sub.price
+        else:
+            if sub.billing_cycle == BillingCycle.MONTHLY:
+                cost = sub.price
+            elif sub.billing_cycle == BillingCycle.YEARLY:
+                cost = sub.price / 12
+            elif sub.billing_cycle == BillingCycle.WEEKLY:
+                cost = sub.price * 4.33
+            else:
+                cost = sub.price
+
+        currency = sub.currency or "CNY"
+        rate = rates.get(currency)
+        if rate is not None:
+            converted_cost = cost * rate
+            category = sub.category or "其他"
+            breakdown_by_category[category] = breakdown_by_category.get(category, 0) + converted_cost
 
     return StatsResponse(
         total_cost=round(total_cost, 2),
-        currency="CNY",
+        base_currency=target_currency,
         active_count=len(subscriptions),
         period=period,
-        breakdown=breakdown
+        breakdown_by_category=breakdown_by_category,
+        breakdown_by_currency=breakdown_by_currency,
+        rates_used=rates_used if rates_used else None,
+        rates_available=rates_available
     )
 
 
@@ -395,6 +456,47 @@ async def get_upcoming_bills(
         Subscription.ending_date >= today,
         Subscription.ending_date <= end_date
     ).order_by(Subscription.ending_date)
+
+    subscriptions = session.exec(statement).all()
+    return subscriptions
+
+
+@router.get(
+    "/expired",
+    response_model=list[SubscriptionRead],
+    summary="过期订阅",
+    description="""
+查询已过期但仍为 Active 状态的订阅列表。
+
+## 功能说明
+- 返回状态为 Active 但到期日已过期的订阅
+- 这些订阅未设置自动续期，需要用户手动处理
+- 按到期日降序排列（最久过期的排在前面）
+
+## 返回值
+返回已过期的订阅列表，包含：
+- 订阅名称、价格、到期日等信息
+- 已过期天数可通过 ending_date 与当前日期计算
+
+## 处理建议
+- 若仍需订阅：更新到期日或开启自动续期
+- 若不再需要：取消或删除订阅
+""",
+    responses={
+        200: {"description": "查询成功"},
+        401: {"description": "Token 无效或未提供"},
+    }
+)
+async def get_expired_subscriptions(
+    session: Session = Depends(get_session)
+) -> list[SubscriptionRead]:
+    today = date.today()
+
+    # 查询状态为 Active 但已过期的订阅
+    statement = select(Subscription).where(
+        Subscription.status == SubscriptionStatus.ACTIVE,
+        Subscription.ending_date < today
+    ).order_by(Subscription.ending_date.desc())
 
     subscriptions = session.exec(statement).all()
     return subscriptions
