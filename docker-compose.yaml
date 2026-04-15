@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  sub-manager:
+    image: ghcr.io/pzweuj/sub_manager_lite:latest
+    container_name: sub-manager-lite
+    ports:
+      - "8000:8000"
+    environment:
+      - API_TOKEN=your-secret-token-here
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

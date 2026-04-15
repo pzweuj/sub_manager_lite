@@ -1,0 +1,9 @@
+# Core
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# Database
+sqlmodel>=0.0.14
+
+# Scheduler
+apscheduler>=3.10.0
