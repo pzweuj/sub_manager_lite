@@ -36,19 +36,16 @@ class SubscriptionBase(SQLModel):
     """
     name: str = Field(
         ...,
-        description="订阅服务名称，如 Netflix、ChatGPT、GitHub Copilot 等",
-        examples=["Netflix", "ChatGPT Plus"]
+        description="订阅服务名称，如 Netflix、ChatGPT、GitHub Copilot 等"
     )
     price: float = Field(
         ...,
         gt=0,
-        description="订阅价格，必须为正数",
-        examples=[15.0, 20.0]
+        description="订阅价格，必须为正数"
     )
     currency: str = Field(
         default="CNY",
-        description="货币类型，默认为人民币 CNY，支持 ISO 4217 货币代码",
-        examples=["CNY", "USD", "EUR"]
+        description="货币类型，默认为人民币 CNY，支持 ISO 4217 货币代码"
     )
     billing_cycle: BillingCycle = Field(
         default=BillingCycle.MONTHLY,
@@ -56,12 +53,11 @@ class SubscriptionBase(SQLModel):
     )
     ending_date: date = Field(
         ...,
-        description="到期日/下次扣费日期，格式为 YYYY-MM-DD，如 2024-12-31"
+        description="到期日/下次扣费日期，格式为 YYYY-MM-DD"
     )
     category: str = Field(
         default="其他",
-        description="订阅分类，如：生产力、娱乐、服务器、教育、其他等",
-        examples=["生产力", "娱乐", "服务器"]
+        description="订阅分类，如：生产力、娱乐、服务器、教育、其他等"
     )
     status: SubscriptionStatus = Field(
         default=SubscriptionStatus.ACTIVE,
