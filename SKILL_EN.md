@@ -92,9 +92,22 @@ POST /subscriptions/
   "price": 20.0,
   "currency": "USD",
   "billing_cycle": "Monthly",
+  "billing_interval": 1,
   "ending_date": "2024-12-31",
   "category": "Productivity",
   "auto_renew": true
+}
+```
+
+Add subscription (every 3 months):
+```json
+POST /subscriptions/
+{
+  "name": "Domain Renewal",
+  "price": 150.0,
+  "billing_cycle": "Monthly",
+  "billing_interval": 3,
+  "ending_date": "2025-03-15"
 }
 ```
 
@@ -104,6 +117,15 @@ PUT /subscriptions/1
 {
   "price": 25.0,
   "ending_date": "2025-01-31"
+}
+```
+
+Update billing cycle (from monthly to every 3 months):
+```json
+PUT /subscriptions/1
+{
+  "billing_cycle": "Monthly",
+  "billing_interval": 3
 }
 ```
 
@@ -126,11 +148,15 @@ Stats response:
 
 ## Billing Cycle
 
-| Value | Monthly Calculation | Yearly Calculation |
-|-------|---------------------|---------------------|
-| Monthly | Price | Price × 12 |
-| Yearly | Price ÷ 12 | Price |
-| Weekly | Price × 4.33 | Price × 52 |
+| billing_cycle | billing_interval | Monthly Calculation | Yearly Calculation |
+|----------------|------------------|---------------------|---------------------|
+| Monthly | 1 | Price | Price × 12 |
+| Monthly | 3 | Price ÷ 3 | Price × 12 ÷ 3 |
+| Yearly | 1 | Price ÷ 12 | Price |
+| Yearly | 4 | Price ÷ 12 ÷ 4 | Price ÷ 4 |
+| Weekly | 1 | Price × 4.33 | Price × 52 |
+
+**Note**: `billing_interval` indicates the cycle count. E.g., `billing_cycle=Monthly, billing_interval=3` means billing every 3 months. Cost is amortized to monthly/yearly.
 
 ## Data Model
 
@@ -140,6 +166,7 @@ Stats response:
 | price | float | ✓ | Price (positive number) |
 | currency | string | default CNY | Currency code |
 | billing_cycle | enum | default Monthly | Monthly/Yearly/Weekly |
+| billing_interval | int | default 1 | Billing interval count, e.g., 3 means every 3 months |
 | ending_date | date | ✓ | Due date YYYY-MM-DD |
 | category | string | default Other | Category label |
 | status | enum | default Active | Active/Canceled |
@@ -147,10 +174,12 @@ Stats response:
 
 ## Auto-Renewal
 
-When `auto_renew=true`, subscription extends by one billing cycle upon expiry:
-- Monthly → +30 days
-- Yearly → +365 days
-- Weekly → +7 days
+When `auto_renew=true`, subscription extends by one billing cycle upon expiry (considering interval):
+- Monthly + interval N → +N months
+- Yearly + interval N → +N years
+- Weekly + interval N → +N weeks
+
+Uses `relativedelta` for precise date calculation, handling leap years and varying month lengths.
 
 Auto-renewal task runs daily at 00:05.
 
@@ -185,27 +214,28 @@ Get from user:
 | `category_name` | `category` | Direct, use "Other" if empty |
 | `inactive` | `status` | `inactive=1` → Canceled, else Active |
 | `auto_renew` | `auto_renew` | Direct (1/0 → true/false) |
-| `cycle` + `frequency` | `billing_cycle` | Combined inference |
+| `cycle` | `billing_cycle` | Cycle type inference |
+| `frequency` | `billing_interval` | Interval count, direct mapping |
 
 ### Billing Cycle Inference
 
 Wallos uses `cycle` + `frequency` combination:
 
-| cycle | frequency | billing_cycle |
-|-------|-----------|---------------|
-| "Monthly" | 1 | Monthly |
-| "Yearly" | 1 | Yearly |
-| "Weekly" | 1 | Weekly |
-| "Daily" | 30 | Monthly (30 days) |
-| Number (days) | 1 | Monthly (if ≤30) |
-| Number (days) | 1 | Yearly (if ≥365) |
+| cycle | frequency | billing_cycle | billing_interval |
+|-------|-----------|---------------|------------------|
+| "Monthly" | 1 | Monthly | 1 |
+| "Monthly" | 3 | Monthly | 3 |
+| "Yearly" | 1 | Yearly | 1 |
+| "Yearly" | 4 | Yearly | 4 |
+| "Weekly" | 1 | Weekly | 1 |
+| "Daily" | 30 | Monthly | 30 (by days) |
+| Number (days) | 1 | Monthly/Yearly | 1 |
 
 **Simplified rules**:
-- If cycle is string, use directly
+- If cycle is string (Monthly/Yearly/Weekly), frequency becomes billing_interval directly
 - If cycle is number (days):
-  - 1-30 → Monthly
-  - 31-364 → Monthly (prorated by actual days)
-  - ≥365 → Yearly
+  - 1-30 → Monthly, billing_interval=1
+  - ≥365 → Yearly, billing_interval=1
 
 ### Migration Request Example
 
@@ -217,10 +247,22 @@ POST /subscriptions/
   "price": 15.99,
   "currency": "USD",
   "billing_cycle": "Monthly",
+  "billing_interval": 1,
   "ending_date": "2024-12-15",
   "category": "Entertainment",
   "status": "Active",
   "auto_renew": true
+}
+```
+
+Example: Subscription billed every 3 months:
+```json
+{
+  "name": "Domain Renewal",
+  "price": 50.0,
+  "billing_cycle": "Monthly",
+  "billing_interval": 3,
+  "ending_date": "2025-03-15"
 }
 ```
 
@@ -263,6 +305,8 @@ Total: $45.99
 | "Add new subscription" | POST /subscriptions/ |
 | "Subscription price increased" | PUT /subscriptions/{id} update price |
 | "Renewed, update due date" | PUT /subscriptions/{id} update ending_date |
+| "Change to every 3 months, price $200" | PUT /subscriptions/{id} update both billing_interval=3, price=200 |
+| "Change to yearly billing" | PUT /subscriptions/{id} update billing_cycle=Yearly, billing_interval=1 |
 | "How much this month" | GET /subscriptions/stats |
 | "How much this year" | GET /subscriptions/stats?period=yearly |
 | "What's due next month" | GET /subscriptions/upcoming?days=30 |

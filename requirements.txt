@@ -10,3 +10,6 @@ apscheduler>=3.10.0
 
 # HTTP Client
 httpx>=0.25.0
+
+# Date utilities
+python-dateutil>=2.8.0

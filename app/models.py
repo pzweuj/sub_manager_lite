@@ -51,6 +51,11 @@ class SubscriptionBase(SQLModel):
         default=BillingCycle.MONTHLY,
         description="计费周期：Monthly(按月)、Yearly(按年)、Weekly(按周)"
     )
+    billing_interval: int = Field(
+        default=1,
+        ge=1,
+        description="计费间隔数量，配合 billing_cycle 使用。如 billing_cycle=Monthly 且 billing_interval=3 表示每3个月"
+    )
     ending_date: date = Field(
         ...,
         description="到期日/下次扣费日期，格式为 YYYY-MM-DD"
@@ -102,6 +107,7 @@ class SubscriptionUpdate(SQLModel):
     price: Optional[float] = None
     currency: Optional[str] = None
     billing_cycle: Optional[BillingCycle] = None
+    billing_interval: Optional[int] = None
     ending_date: Optional[date] = None
     category: Optional[str] = None
     status: Optional[SubscriptionStatus] = None

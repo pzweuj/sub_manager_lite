@@ -5,6 +5,7 @@
 from datetime import date, timedelta
 from logging import getLogger
 
+from dateutil.relativedelta import relativedelta
 from sqlmodel import Session, select
 
 from app.database import engine
@@ -36,15 +37,16 @@ def process_auto_renew():
             return
 
         for sub in subscriptions:
-            # 根据计费周期计算新的到期日
+            # 根据计费周期和间隔计算新的到期日
+            interval = sub.billing_interval or 1
             if sub.billing_cycle == BillingCycle.MONTHLY:
-                new_date = sub.ending_date + timedelta(days=30)
+                new_date = sub.ending_date + relativedelta(months=interval)
             elif sub.billing_cycle == BillingCycle.YEARLY:
-                new_date = sub.ending_date + timedelta(days=365)
+                new_date = sub.ending_date + relativedelta(years=interval)
             elif sub.billing_cycle == BillingCycle.WEEKLY:
-                new_date = sub.ending_date + timedelta(days=7)
+                new_date = sub.ending_date + timedelta(weeks=interval)
             else:
-                new_date = sub.ending_date + timedelta(days=30)
+                new_date = sub.ending_date + relativedelta(months=interval)
 
             sub.ending_date = new_date
             session.add(sub)

@@ -335,22 +335,23 @@ async def get_stats(
 
     for sub in subscriptions:
         # 计算周期费用
+        interval = sub.billing_interval or 1
         if period == "yearly":
             if sub.billing_cycle == BillingCycle.MONTHLY:
-                cost = sub.price * 12
+                cost = sub.price * 12 / interval
             elif sub.billing_cycle == BillingCycle.YEARLY:
-                cost = sub.price
+                cost = sub.price / interval
             elif sub.billing_cycle == BillingCycle.WEEKLY:
-                cost = sub.price * 52
+                cost = sub.price * 52 / interval
             else:
                 cost = sub.price
         else:  # monthly
             if sub.billing_cycle == BillingCycle.MONTHLY:
-                cost = sub.price
+                cost = sub.price / interval
             elif sub.billing_cycle == BillingCycle.YEARLY:
-                cost = sub.price / 12
+                cost = sub.price / 12 / interval
             elif sub.billing_cycle == BillingCycle.WEEKLY:
-                cost = sub.price * 4.33
+                cost = sub.price * 4.33 / interval
             else:
                 cost = sub.price
 
@@ -381,22 +382,23 @@ async def get_stats(
 
     # 按分类统计（转换后的费用）
     for sub in subscriptions:
+        interval = sub.billing_interval or 1
         if period == "yearly":
             if sub.billing_cycle == BillingCycle.MONTHLY:
-                cost = sub.price * 12
+                cost = sub.price * 12 / interval
             elif sub.billing_cycle == BillingCycle.YEARLY:
-                cost = sub.price
+                cost = sub.price / interval
             elif sub.billing_cycle == BillingCycle.WEEKLY:
-                cost = sub.price * 52
+                cost = sub.price * 52 / interval
             else:
                 cost = sub.price
         else:
             if sub.billing_cycle == BillingCycle.MONTHLY:
-                cost = sub.price
+                cost = sub.price / interval
             elif sub.billing_cycle == BillingCycle.YEARLY:
-                cost = sub.price / 12
+                cost = sub.price / 12 / interval
             elif sub.billing_cycle == BillingCycle.WEEKLY:
-                cost = sub.price * 4.33
+                cost = sub.price * 4.33 / interval
             else:
                 cost = sub.price
 

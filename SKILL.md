@@ -92,9 +92,22 @@ POST /subscriptions/
   "price": 20.0,
   "currency": "USD",
   "billing_cycle": "Monthly",
+  "billing_interval": 1,
   "ending_date": "2024-12-31",
   "category": "生产力",
   "auto_renew": true
+}
+```
+
+新增订阅（每3个月）：
+```json
+POST /subscriptions/
+{
+  "name": "域名续费",
+  "price": 150.0,
+  "billing_cycle": "Monthly",
+  "billing_interval": 3,
+  "ending_date": "2025-03-15"
 }
 ```
 
@@ -104,6 +117,15 @@ PUT /subscriptions/1
 {
   "price": 25.0,
   "ending_date": "2025-01-31"
+}
+```
+
+更新计费周期（从每月改为每3个月）：
+```json
+PUT /subscriptions/1
+{
+  "billing_cycle": "Monthly",
+  "billing_interval": 3
 }
 ```
 
@@ -126,11 +148,15 @@ PUT /subscriptions/1
 
 ## 计费周期
 
-| 值 | 月度计算 | 年度计算 |
-|----|----------|----------|
-| Monthly | 价格 | 价格 × 12 |
-| Yearly | 价格 ÷ 12 | 价格 |
-| Weekly | 价格 × 4.33 | 价格 × 52 |
+| billing_cycle | billing_interval | 月度计算 | 年度计算 |
+|----------------|------------------|----------|----------|
+| Monthly | 1 | 价格 | 价格 × 12 |
+| Monthly | 3 | 价格 ÷ 3 | 价格 × 12 ÷ 3 |
+| Yearly | 1 | 价格 ÷ 12 | 价格 |
+| Yearly | 4 | 价格 ÷ 12 ÷ 4 | 价格 ÷ 4 |
+| Weekly | 1 | 价格 × 4.33 | 价格 × 52 |
+
+**说明**：`billing_interval` 表示周期数量，如 `billing_cycle=Monthly, billing_interval=3` 表示每3个月扣费一次。费用计算时将总价均摊到月度/年度。
 
 ## 数据模型
 
@@ -140,6 +166,7 @@ PUT /subscriptions/1
 | price | float | ✓ | 价格（正数） |
 | currency | string | 默认 CNY | 货币代码 |
 | billing_cycle | enum | 默认 Monthly | Monthly/Yearly/Weekly |
+| billing_interval | int | 默认 1 | 计费间隔数量，如 3 表示每3个月 |
 | ending_date | date | ✓ | 到期日 YYYY-MM-DD |
 | category | string | 默认 其他 | 分类标签 |
 | status | enum | 默认 Active | Active/Canceled |
@@ -147,10 +174,12 @@ PUT /subscriptions/1
 
 ## 自动续期
 
-当 `auto_renew=true` 时，订阅到期后系统自动延长一个计费周期：
-- Monthly → 延长 30 天
-- Yearly → 延长 365 天
-- Weekly → 延长 7 天
+当 `auto_renew=true` 时，订阅到期后系统自动延长一个计费周期（考虑间隔）：
+- Monthly + interval N → 延长 N 个月
+- Yearly + interval N → 延长 N 年
+- Weekly + interval N → 延长 N 周
+
+使用 `relativedelta` 精确计算日期，正确处理闰年和不同月份天数。
 
 自动续期任务每天 00:05 执行。
 
@@ -185,27 +214,28 @@ PUT /subscriptions/1
 | `category_name` | `category` | 直接映射，空值用"其他" |
 | `inactive` | `status` | `inactive=1` → Canceled，否则 Active |
 | `auto_renew` | `auto_renew` | 直接映射（1/0 → true/false） |
-| `cycle` + `frequency` | `billing_cycle` | 组合推断周期类型 |
+| `cycle` | `billing_cycle` | 周期类型推断 |
+| `frequency` | `billing_interval` | 间隔数量，直接映射 |
 
 ### 计费周期推断
 
 Wallos 使用 `cycle` + `frequency` 组合表示周期：
 
-| cycle | frequency | billing_cycle |
-|-------|-----------|---------------|
-| "Monthly" | 1 | Monthly |
-| "Yearly" | 1 | Yearly |
-| "Weekly" | 1 | Weekly |
-| "Daily" | 30 | Monthly（30天） |
-| 数字(天数) | 1 | Monthly（如果 ≤30） |
-| 数字(天数) | 1 | Yearly（如果 ≥365） |
+| cycle | frequency | billing_cycle | billing_interval |
+|-------|-----------|---------------|------------------|
+| "Monthly" | 1 | Monthly | 1 |
+| "Monthly" | 3 | Monthly | 3 |
+| "Yearly" | 1 | Yearly | 1 |
+| "Yearly" | 4 | Yearly | 4 |
+| "Weekly" | 1 | Weekly | 1 |
+| "Daily" | 30 | Monthly | 30（按天数） |
+| 数字(天数) | 1 | Monthly/Yearly | 1 |
 
 **简化规则**：
-- 若 cycle 为字符串，直接使用
+- 若 cycle 为字符串（Monthly/Yearly/Weekly），frequency 直接作为 billing_interval
 - 若 cycle 为数字天数：
-  - 1-30 → Monthly
-  - 31-364 → Monthly（按实际天数折算）
-  - ≥365 → Yearly
+  - 1-30 → Monthly, billing_interval=1
+  - ≥365 → Yearly, billing_interval=1
 
 ### 迁移请求示例
 
@@ -217,10 +247,22 @@ POST /subscriptions/
   "price": 15.99,
   "currency": "USD",
   "billing_cycle": "Monthly",
+  "billing_interval": 1,
   "ending_date": "2024-12-15",
   "category": "娱乐",
   "status": "Active",
   "auto_renew": true
+}
+```
+
+示例：每3个月扣费的订阅：
+```json
+{
+  "name": "域名续费",
+  "price": 50.0,
+  "billing_cycle": "Monthly",
+  "billing_interval": 3,
+  "ending_date": "2025-03-15"
 }
 ```
 
@@ -263,6 +305,8 @@ POST /subscriptions/
 | "记录新订阅" | POST /subscriptions/ |
 | "订阅涨价了" | PUT /subscriptions/{id} 更新 price |
 | "续费了，更新到期日" | PUT /subscriptions/{id} 更新 ending_date |
+| "改为3个月扣费，价格200元" | PUT /subscriptions/{id} 同时更新 billing_interval=3, price=200 |
+| "改为按年扣费" | PUT /subscriptions/{id} 更新 billing_cycle=Yearly, billing_interval=1 |
 | "本月花了多少" | GET /subscriptions/stats |
 | "今年花了多少" | GET /subscriptions/stats?period=yearly |
 | "下月有什么扣费" | GET /subscriptions/upcoming?days=30 |

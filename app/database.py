@@ -16,12 +16,31 @@ engine = create_engine(
 )
 
 
+def migrate_db():
+    """
+    数据库迁移：检查并添加缺失的字段。
+    支持 SQLite 的 ALTER TABLE ADD COLUMN。
+    """
+    with Session(engine) as session:
+        # 检查 billing_interval 字段是否存在
+        result = session.exec(
+            "SELECT name FROM pragma_table_info('subscription') WHERE name='billing_interval'"
+        )
+        if not result.first():
+            # 添加 billing_interval 字段
+            session.exec(
+                "ALTER TABLE subscription ADD COLUMN billing_interval INTEGER DEFAULT 1 NOT NULL"
+            )
+            session.commit()
+
+
 def init_db():
     """
-    初始化数据库，创建所有表结构。
+    初始化数据库，创建所有表结构并执行迁移。
     在应用启动时调用一次即可。
     """
     SQLModel.metadata.create_all(engine)
+    migrate_db()
 
 
 def get_session():
