@@ -3,6 +3,7 @@
 负责初始化 SQLite 数据库连接和创建表结构
 """
 import os
+from sqlalchemy import text
 from sqlmodel import SQLModel, create_engine, Session
 
 # 数据库文件路径
@@ -24,12 +25,12 @@ def migrate_db():
     with Session(engine) as session:
         # 检查 billing_interval 字段是否存在
         result = session.exec(
-            "SELECT name FROM pragma_table_info('subscription') WHERE name='billing_interval'"
+            text("SELECT name FROM pragma_table_info('subscription') WHERE name='billing_interval'")
         )
         if not result.first():
             # 添加 billing_interval 字段
             session.exec(
-                "ALTER TABLE subscription ADD COLUMN billing_interval INTEGER DEFAULT 1 NOT NULL"
+                text("ALTER TABLE subscription ADD COLUMN billing_interval INTEGER DEFAULT 1 NOT NULL")
             )
             session.commit()
 
