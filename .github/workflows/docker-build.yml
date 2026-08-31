@@ -29,6 +29,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Run Rust compatibility tests
+        run: cargo test --locked
+
       - name: Extract version from commit message
         id: version
         run: |
@@ -56,10 +62,24 @@ jobs:
             type=raw,value=${{ steps.version.outputs.version }}
             type=raw,value=latest
 
+      - name: Build and smoke-test Rust image
+        run: |
+          docker build -f Dockerfile -t sub-manager-lite:ci .
+          test_dir="$(mktemp -d)"
+          trap 'docker rm -f sub-manager-lite-ci >/dev/null 2>&1 || true; rm -rf "$test_dir"' EXIT
+          python3 -c 'import sqlite3, sys; c=sqlite3.connect(sys.argv[1]); c.execute("CREATE TABLE subscription (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, price FLOAT NOT NULL, currency VARCHAR NOT NULL, billing_cycle VARCHAR(7) NOT NULL, ending_date DATE NOT NULL, category VARCHAR NOT NULL, status VARCHAR(8) NOT NULL, auto_renew BOOLEAN NOT NULL)"); c.execute("INSERT INTO subscription VALUES (1, ?, 9.9, ?, ?, ?, ?, ?, 0)", ("Legacy", "CNY", "MONTHLY", "2099-01-01", "其他", "ACTIVE")); c.commit(); c.close()' "$test_dir/sub_manager.db"
+          docker run -d --name sub-manager-lite-ci -p 18080:8000 -e API_TOKEN=0123456789abcdef -v "$test_dir:/data" sub-manager-lite:ci
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18080/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent -H 'X-API-Token: 0123456789abcdef' http://127.0.0.1:18080/subscriptions/ | grep -q Legacy
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

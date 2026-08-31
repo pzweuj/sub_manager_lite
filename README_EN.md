@@ -13,12 +13,23 @@ Service URL: http://localhost:8000
 
 **[中文文档](./README.md)**
 
+## Local Rust Development
+
+Rust 1.88 or newer is required.
+
+```bash
+cargo test --locked
+API_TOKEN=your-strong-token cargo run --release --locked
+```
+
+The default local database is `sqlite:///./sub_manager.db`; the Docker image continues to use `sqlite:////data/sub_manager.db`.
+
 ## Security Notes
 
 - `API_TOKEN` must be a strong random value (at least 16 characters). The service validates it on startup and refuses to start with a weak or placeholder token.
 - For public deployments, always serve through an HTTPS reverse proxy (Nginx/Caddy, etc.) to avoid the token being sent in plaintext.
 - The service has per-IP rate limiting; too many auth failures return 429 to prevent brute-forcing. This limiter is in-process memory and only applies to single-instance deployments.
-- `/`, `/docs`, and `/redoc` are unauthenticated by default; for public deployments consider disabling the docs (`docs_url=None, redoc_url=None`).
+- `/`, `/docs`, and `/redoc` are unauthenticated by default; for public deployments, restrict access to the documentation endpoints at the reverse-proxy layer.
 
 ## Agent Guide
 

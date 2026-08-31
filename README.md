@@ -13,12 +13,23 @@ docker-compose up -d
 
 服务地址: http://localhost:8000
 
+## Rust 本地开发
+
+需要 Rust 1.88 或更高版本。
+
+```bash
+cargo test --locked
+API_TOKEN=your-strong-token cargo run --release --locked
+```
+
+默认数据库为 `sqlite:///./sub_manager.db`；Docker 镜像继续使用 `sqlite:////data/sub_manager.db`。
+
 ## 安全注意事项
 
 - `API_TOKEN` 必须设置为强随机值（至少 16 位）。服务启动时会校验，弱 Token 或占位符将拒绝启动。
 - 公网部署时务必通过 HTTPS 反向代理（Nginx/Caddy 等）访问，避免 Token 明文传输被窃听。
 - 服务内置按 IP 限流，鉴权失败次数过多会返回 429，用于防爆破；该限流基于进程内内存，仅适用于单实例部署。
-- `/`、`/docs`、`/redoc` 默认未鉴权，公网部署建议关闭文档页（`docs_url=None, redoc_url=None`）。
+- `/`、`/docs`、`/redoc` 默认未鉴权，公网部署建议在反向代理层限制文档端点的访问。
 
 ## Agent 使用指南
 
