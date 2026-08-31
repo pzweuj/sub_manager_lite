@@ -13,6 +13,13 @@ Service URL: http://localhost:8000
 
 **[中文文档](./README.md)**
 
+## Security Notes
+
+- `API_TOKEN` must be a strong random value (at least 16 characters). The service validates it on startup and refuses to start with a weak or placeholder token.
+- For public deployments, always serve through an HTTPS reverse proxy (Nginx/Caddy, etc.) to avoid the token being sent in plaintext.
+- The service has per-IP rate limiting; too many auth failures return 429 to prevent brute-forcing. This limiter is in-process memory and only applies to single-instance deployments.
+- `/`, `/docs`, and `/redoc` are unauthenticated by default; for public deployments consider disabling the docs (`docs_url=None, redoc_url=None`).
+
 ## Agent Guide
 
 See [SKILL.md](./SKILL.md)

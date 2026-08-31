@@ -13,6 +13,13 @@ docker-compose up -d
 
 服务地址: http://localhost:8000
 
+## 安全注意事项
+
+- `API_TOKEN` 必须设置为强随机值（至少 16 位）。服务启动时会校验，弱 Token 或占位符将拒绝启动。
+- 公网部署时务必通过 HTTPS 反向代理（Nginx/Caddy 等）访问，避免 Token 明文传输被窃听。
+- 服务内置按 IP 限流，鉴权失败次数过多会返回 429，用于防爆破；该限流基于进程内内存，仅适用于单实例部署。
+- `/`、`/docs`、`/redoc` 默认未鉴权，公网部署建议关闭文档页（`docs_url=None, redoc_url=None`）。
+
 ## Agent 使用指南
 
 详见 [SKILL.md](./SKILL.md)

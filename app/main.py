@@ -2,6 +2,7 @@
 Sub Manager Lite - 订阅管理服务主入口
 基于 FastAPI 构建的本地订阅管理服务
 """
+import os
 from contextlib import asynccontextmanager
 from logging import getLogger
 
@@ -9,14 +10,19 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
-from app.cron import process_auto_renew
+from app.auth import validate_api_token
+from app.cron import process_due_subscriptions
 from app.database import init_db
 from app.routers import subscriptions
+from app.security import RateLimitMiddleware
 
 logger = getLogger(__name__)
 
 # 定时任务调度器
 scheduler = AsyncIOScheduler()
+
+# 到期订阅自检间隔（分钟），可用环境变量覆盖
+SELF_CHECK_INTERVAL_MINUTES = int(os.getenv("SELF_CHECK_INTERVAL_MINUTES", "60"))
 
 
 @asynccontextmanager
@@ -25,20 +31,23 @@ async def lifespan(app: FastAPI):
     应用生命周期管理。
     启动时初始化数据库和定时任务，关闭时清理资源。
     """
-    # 启动时：初始化数据库
+    # 启动时：校验 Token 强度并初始化数据库
+    validate_api_token()
     init_db()
 
-    # 启动定时任务：每天 00:05 执行自动续期检查
+    # 启动自检：立即校正一次到期订阅（停机重启后无需等待定时点）
+    process_due_subscriptions()
+
+    # 定期自检：默认每小时执行一次到期订阅处理
     scheduler.add_job(
-        process_auto_renew,
-        trigger="cron",
-        hour=0,
-        minute=5,
-        id="auto_renew_job",
+        process_due_subscriptions,
+        trigger="interval",
+        minutes=SELF_CHECK_INTERVAL_MINUTES,
+        id="due_subscriptions_job",
         replace_existing=True
     )
     scheduler.start()
-    logger.info("定时任务调度器已启动，自动续期任务将在每天 00:05 执行")
+    logger.info(f"定时任务调度器已启动，到期订阅自检每 {SELF_CHECK_INTERVAL_MINUTES} 分钟执行一次")
 
     yield
 
@@ -58,6 +67,7 @@ app = FastAPI(
 - 💰 计算月均花费，了解订阅开销
 - ⏰ 账单预警，提前知晓即将扣费的订阅
 - 🔄 自动续期，到期自动延长订阅周期
+- 🗑️ 到期自动取消，未开启续期的订阅到期后自动转为取消状态
 
 ### 鉴权说明
 除 API 文档页面外，所有接口均需要 Token 鉴权。
@@ -73,6 +83,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# 注册限流中间件（防 Token 爆破）
+app.add_middleware(RateLimitMiddleware)
 
 # 注册路由
 app.include_router(subscriptions.router)

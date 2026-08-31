@@ -1,6 +1,6 @@
 ---
 name: sub_manager_lite
-description: 订阅管理服务 - 记录订阅、计算开销、账单预警、自动续期
+description: 订阅管理服务 - 记录订阅、计算开销、账单预警、自动续期、到期自动取消
 trigger: 用户询问订阅相关操作时调用，如"记录订阅"、"更新订阅"、"查看花费"、"即将扣费"、"过期订阅"、"取消订阅"、"恢复订阅"、"删除订阅"、"从Wallos迁移"
 ---
 
@@ -64,7 +64,7 @@ X-API-Token: <Token>
 | GET | `/subscriptions/` | 查询列表（支持 name、status 过滤） |
 | GET | `/subscriptions/stats` | 费用统计（支持 period 参数，自动排除过期订阅） |
 | GET | `/subscriptions/upcoming` | 账单预警（支持 days 参数） |
-| GET | `/subscriptions/expired` | 过期订阅列表 |
+| GET | `/subscriptions/expired` | 过期订阅列表（将被自动取消） |
 
 ## 接口参数
 
@@ -79,7 +79,8 @@ X-API-Token: <Token>
 
 ### GET /subscriptions/expired
 - 无参数
-- 返回状态为 Active 但到期日已过期的订阅
+- 返回状态为 Active 但到期日已早于今天的订阅
+- 这些订阅未设置自动续期，将在下一次自检时被自动取消
 - 按到期日降序排列（最久过期的排在前面）
 
 ## 请求示例
@@ -170,18 +171,27 @@ PUT /subscriptions/1
 | ending_date | date | ✓ | 到期日 YYYY-MM-DD |
 | category | string | 默认 其他 | 分类标签 |
 | status | enum | 默认 Active | Active/Canceled |
-| auto_renew | bool | 默认 false | 是否自动续期 |
+| auto_renew | bool | 默认 false | 是否自动续期。false 的活跃订阅到期后会自动取消 |
 
-## 自动续期
+## 到期自动处理
 
-当 `auto_renew=true` 时，订阅到期后系统自动延长一个计费周期（考虑间隔）：
-- Monthly + interval N → 延长 N 个月
-- Yearly + interval N → 延长 N 年
-- Weekly + interval N → 延长 N 周
+系统在**启动时**和**每隔一段时间（默认 60 分钟，可用 `SELF_CHECK_INTERVAL_MINUTES` 调整）**自检一次到期订阅。
+
+### 自动续期
+
+当 `auto_renew=true` 时，订阅到期后自动延长，且从**到期日**起连续累加计费周期，直到新到期日落在未来：
+
+- Monthly + interval N → 每次加 N 个月
+- Yearly + interval N → 每次加 N 年
+- Weekly + interval N → 每次加 N 周
+
+即使服务停机多日，也会一次补齐所有错过的周期，不会停留在过期状态。
+
+### 到期自动取消
+
+当 `auto_renew=false` 时，活跃订阅一旦过期（到期日早于今天），系统会自动将其状态改为 `Canceled`。
 
 使用 `relativedelta` 精确计算日期，正确处理闰年和不同月份天数。
-
-自动续期任务每天 00:05 执行。
 
 ## 从 Wallos 迁移
 
@@ -319,13 +329,15 @@ POST /subscriptions/
 
 ## 过期订阅处理
 
-当用户查询过期订阅时（GET /subscriptions/expired），返回的订阅需要用户决定处理方式：
+`GET /subscriptions/expired` 返回的是「已过期但仍为 Active」的订阅。这些订阅未设置自动续期，将在下一次自检时被自动取消。若用户仍想保留，需在下一次自检前处理：
 
 | 用户意图 | Agent 操作 |
 |----------|------------|
-| "仍需要这个订阅" | PUT /subscriptions/{id} 更新 ending_date 或设置 auto_renew=true |
-| "不再需要" | PUT /subscriptions/{id}/cancel 或 DELETE /subscriptions/{id} |
+| "仍需要这个订阅" | PUT /subscriptions/{id} 更新 ending_date（设为未来日期）或设置 auto_renew=true |
+| "不再需要" | 无需操作（系统会自动取消），或 PUT /subscriptions/{id}/cancel 提前取消 |
 | "批量处理过期订阅" | 遍历 expired 列表，询问用户对每个的处理方式 |
+
+注意：恢复（restore）一个已过期的订阅时，应同时更新 ending_date，否则下一次自检会再次自动取消。
 
 ## 错误码
 
@@ -334,3 +346,4 @@ POST /subscriptions/
 | 401 | Token 无效，提示用户更新配置 |
 | 404 | 订阅不存在 |
 | 400 | 请求数据无效或状态冲突 |
+| 429 | 请求过于频繁（限流触发），稍后重试 |

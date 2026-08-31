@@ -1,6 +1,6 @@
 ---
 name: sub_manager_lite
-description: Subscription management service - track subscriptions, calculate expenses, billing alerts, auto-renewal
+description: Subscription management service - track subscriptions, calculate expenses, billing alerts, auto-renewal, auto-cancel on expiry
 trigger: User asks subscription-related operations like "add subscription", "update subscription", "check expenses", "upcoming bills", "expired subscriptions", "cancel subscription", "restore subscription", "delete subscription", "migrate from Wallos"
 ---
 
@@ -64,7 +64,7 @@ X-API-Token: <Token>
 | GET | `/subscriptions/` | List subscriptions (filter by name, status) |
 | GET | `/subscriptions/stats` | Expense statistics (excludes expired subscriptions) |
 | GET | `/subscriptions/upcoming` | Billing alerts (with days param) |
-| GET | `/subscriptions/expired` | Expired subscriptions list |
+| GET | `/subscriptions/expired` | Expired subscriptions list (will be auto-canceled) |
 
 ## Endpoint Parameters
 
@@ -79,7 +79,8 @@ X-API-Token: <Token>
 
 ### GET /subscriptions/expired
 - No parameters
-- Returns subscriptions with Active status but past due date
+- Returns subscriptions with Active status but due date earlier than today
+- These have auto-renewal disabled and will be auto-canceled at the next self-check
 - Sorted by due date descending (most expired first)
 
 ## Request Examples
@@ -170,18 +171,27 @@ Stats response:
 | ending_date | date | ✓ | Due date YYYY-MM-DD |
 | category | string | default Other | Category label |
 | status | enum | default Active | Active/Canceled |
-| auto_renew | bool | default false | Auto-renewal enabled |
+| auto_renew | bool | default false | Auto-renewal enabled. Active subscriptions with false are auto-canceled on expiry |
 
-## Auto-Renewal
+## Automatic Expiry Handling
 
-When `auto_renew=true`, subscription extends by one billing cycle upon expiry (considering interval):
-- Monthly + interval N → +N months
-- Yearly + interval N → +N years
-- Weekly + interval N → +N weeks
+On startup and periodically (default every 60 minutes, configurable via `SELF_CHECK_INTERVAL_MINUTES`), the system checks due subscriptions:
+
+### Auto-Renewal
+
+When `auto_renew=true`, the subscription renews on expiry, accumulating billing cycles from the due date until the new due date falls in the future:
+
+- Monthly + interval N → +N months each step
+- Yearly + interval N → +N years each step
+- Weekly + interval N → +N weeks each step
+
+Even if the service was down for days, all missed cycles are caught up at once.
+
+### Auto-Cancel on Expiry
+
+When `auto_renew=false`, an active subscription is automatically set to `Canceled` once expired (due date earlier than today).
 
 Uses `relativedelta` for precise date calculation, handling leap years and varying month lengths.
-
-Auto-renewal task runs daily at 00:05.
 
 ## Migrate from Wallos
 
@@ -319,13 +329,15 @@ Total: $45.99
 
 ## Handling Expired Subscriptions
 
-When user queries expired subscriptions (GET /subscriptions/expired), ask user to decide:
+`GET /subscriptions/expired` returns subscriptions that are expired but still Active. These have auto-renewal disabled and will be auto-canceled at the next self-check. If the user wants to keep one, act before the next self-check:
 
 | User Intent | Agent Action |
 |-------------|--------------|
-| "Still need this subscription" | PUT /subscriptions/{id} update ending_date or set auto_renew=true |
-| "No longer need" | PUT /subscriptions/{id}/cancel or DELETE /subscriptions/{id} |
+| "Still need this subscription" | PUT /subscriptions/{id} update ending_date (set to a future date) or set auto_renew=true |
+| "No longer need" | No action needed (auto-canceled), or PUT /subscriptions/{id}/cancel early |
 | "Batch process expired" | Iterate expired list, ask user for each |
+
+Note: when restoring an expired subscription, also update ending_date, otherwise it will be auto-canceled again at the next self-check.
 
 ## Error Codes
 
@@ -334,3 +346,4 @@ When user queries expired subscriptions (GET /subscriptions/expired), ask user t
 | 401 | Token invalid, prompt user to update config |
 | 404 | Subscription not found |
 | 400 | Invalid request data or state conflict |
+| 429 | Too many requests (rate limit), retry later |
